@@ -1,0 +1,2 @@
+[group_name]
+host.name ansible_host=1.1.1.1

@@ -1,0 +1,7 @@
+# required
+do_token = "<DIGITALOCEAN_TOKEN>"
+
+hostname = "breh"
+region = "tor1"
+
+# optional overrides - see vars.tf
