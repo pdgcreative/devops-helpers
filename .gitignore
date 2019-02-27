@@ -1,4 +1,10 @@
-terraform.tfstate
-*.tfvars
+*.tfstate
+*.tfstate.backup
+.terraform
+*.auto.tfvars
 .DS_Store
 _env.rb
+*.cfg
+.vault_pass
+vault.yml
+*.retry

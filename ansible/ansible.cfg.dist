@@ -1,0 +1,9 @@
+# Set paths to these files in your environment
+[defaults]
+inventory = inventory/hosts
+vault_password_file = .vault_pass
+private_key_file =  <PATH TO KEY_FILE>
+host_key_checking = False
+
+[ssh_connection]
+pipelining = True

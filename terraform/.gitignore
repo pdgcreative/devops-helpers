@@ -1,5 +1,0 @@
-# these are considered starting points 
-.tfstate
-.tfstate.backup
-.terraform
-.auto.tfvars

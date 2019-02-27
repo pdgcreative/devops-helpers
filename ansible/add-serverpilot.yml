@@ -1,0 +1,143 @@
+# example: ansible-playbook add-serverpilot.yml --extra-vars "fresh_server_ip=1.2.3.4, server_name=somename"
+# https://github.com/ServerPilot/API#connect-a-new-server
+---
+
+- name: Add ServerPilot server and return info 
+  hosts: 127.0.0.1
+  vars: 
+    sp_api_base: "https://api.serverpilot.io/v1"
+    server_name: "{{ server_name }}"
+  vars_files:  
+    - vault.yml
+  gather_facts: no
+  tasks:
+    - name: Add server record to ServerPilot if not
+      uri:
+        url: "{{ sp_api_base }}/servers"
+        method: POST
+        user: "{{ sp_client_id }}"
+        password: "{{ sp_api_key }}"
+        body: "{ 'name':'{{ server_name }}', 'enable_ssh_password_auth':true}"
+        body_format: json
+        status_code: 200
+        timeout: 10
+        force_basic_auth: true
+      register: sp_server_info 
+      ignore_errors: True   
+    - name: Pass along server info to next play
+      set_fact: 
+        action_id: "{{ sp_server_info.json.actionid }}"
+        server_id: "{{ sp_server_info.json.data.id }}"
+        apikey: "{{ sp_server_info.json.data.apikey  }}"
+      when: sp_server_info.json.data is defined
+
+- name: Connect ServerPilot to a freshly created Ubuntu VPS and do some post-install configuration
+  hosts: "{{ fresh_server_ip }}"
+  vars: 
+    phps: ["7.3", "7.2", "7.1", "7.0", "5.6"]
+    phps_mcrypt: ["7.3", "7.2"]
+  gather_facts: no
+  become: true
+  become_user: root  
+  tasks:
+    - name: sudo apt-get update 
+      apt:
+        upgrade: yes
+        update_cache: yes
+        cache_valid_time: 86400 #One day
+
+    - name: Install packages ServerPilot needs
+      apt:
+        name: "{{ packages }}"
+      vars:
+        packages:
+        - wget
+        - ca-certificates
+
+    - name: Fetch the ServerPilot installer 
+      command: wget -nv -O serverpilot-installer https://download.serverpilot.io/serverpilot-installer
+      when: hostvars['localhost']['server_id'] is defined
+
+    - name: Run installer 
+      command: "sh serverpilot-installer --server-id={{hostvars['localhost']['server_id']}} --server-apikey={{hostvars['localhost']['apikey']}}"
+      when: hostvars['localhost']['server_id'] is defined
+
+    # Make sure ServerPilto totally finishhes before doing the post-flight config...
+    # TODO - replace this with polling of the actionid per ServerPilot api
+    - pause:
+        minutes: 3
+
+    - name: Configure timezone 
+      timezone:
+        name: America/Chicago
+
+    - name: "Give it the good ol' reboot"
+      reboot:
+
+    - name: Add htop
+      apt:
+        name: htop
+
+    - name: Turn off MySQL strict mode
+      copy:
+        dest: "/etc/mysql/conf.d/disable_strict_mode.cnf"
+        content: |
+          [mysqld]
+          sql_mode=IGNORE_SPACE,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION
+
+    - name: Restart MySQL
+      service:
+        name: mysql
+        state: restarted
+
+    - name: Add htop
+      apt:
+        name: htop
+
+    - name: Add gcc, make, autoconf, libc-dev, pkg-config
+      apt:
+        name: "{{ packages }}"
+      vars:
+        packages:
+        - gcc
+        - make 
+        - autoconf 
+        - libc-dev 
+        - pkg-config
+
+    - name: Add htop
+      apt:
+        name: libmagickwand-dev
+
+    - name: Install Imagick on all PHP versions
+      pear:
+        name: pecl/imagick
+        executable: pecl{{ item }}-sp
+        state: present
+      with_items: "{{ phps }}"
+
+    - name: Install Imagick on all PHP versions
+      pear:
+        name: pecl/imagick
+        executable: "pecl{{ item }}-sp"
+        state: present
+      with_items: "{{ phps }}"
+
+    - name: Create a configuration file for imagick
+      command: 'bash -c "echo extension=imagick.so > /etc/php{{ item }}-sp/conf.d/imagick.ini"'
+      with_items: "{{ phps }}"
+
+    - name: Install libmcrypt-dev
+      apt:
+        name: libmcrypt-dev
+
+    - name: Create a configuration file for libmcrypt-dev
+      command: 'bash -c "echo extension=mcrypt.so > /etc/php7.2-sp/conf.d/mcrypt.ini"'
+      with_items: "{{ phps_mcrypt }}"
+
+    - name: Restart PHP
+      service:
+        name: "php{{ item }}-fpm-sp"
+        state: restarted
+      with_items: "{{ phps }}"
+
