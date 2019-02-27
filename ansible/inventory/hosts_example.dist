@@ -2,5 +2,5 @@
 host.name ansible_host=1.1.1.1
 
 [group_name:vars]
-ansible_python_interpreter=/usr/bin/python3 #thanksUbuntu
+ansible_python_interpreter=/usr/bin/python3 #this is so we don't have to play chicken and egg with python on Ubutnu 18
 ansible_user=root

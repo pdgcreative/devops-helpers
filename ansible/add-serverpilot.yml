@@ -11,7 +11,7 @@
     - vault.yml
   gather_facts: no
   tasks:
-    - name: Add server record to ServerPilot if not
+    - name: Add server record to ServerPilot
       uri:
         url: "{{ sp_api_base }}/servers"
         method: POST
@@ -19,11 +19,11 @@
         password: "{{ sp_api_key }}"
         body: "{ 'name':'{{ server_name }}', 'enable_ssh_password_auth':true}"
         body_format: json
-        status_code: 200
+        status_code: 200, 409
         timeout: 10
         force_basic_auth: true
-      register: sp_server_info 
-      ignore_errors: True   
+      register: sp_server_info # if the server already exists, sp_server_info.json.data will not be a thing
+
     - name: Pass along server info to next play
       set_fact: 
         action_id: "{{ sp_server_info.json.actionid }}"
@@ -31,11 +31,17 @@
         apikey: "{{ sp_server_info.json.data.apikey  }}"
       when: sp_server_info.json.data is defined
 
+    - name: Pass the API base to next play  
+      set_fact: 
+        sp_api_base: "{{ sp_api_base }}"
+
 - name: Connect ServerPilot to a freshly created Ubuntu VPS and do some post-install configuration
   hosts: "{{ fresh_server_ip }}"
   vars: 
     phps: ["7.3", "7.2", "7.1", "7.0", "5.6"]
     phps_mcrypt: ["7.3", "7.2"]
+  vars_files:  
+    - vault.yml
   gather_facts: no
   become: true
   become_user: root  
@@ -59,20 +65,34 @@
       when: hostvars['localhost']['server_id'] is defined
 
     - name: Run installer 
-      command: "sh serverpilot-installer --server-id={{hostvars['localhost']['server_id']}} --server-apikey={{hostvars['localhost']['apikey']}}"
+      command: sh serverpilot-installer --server-id={{hostvars['localhost']['server_id']|quote}} --server-apikey={{hostvars['localhost']['apikey']|quote}}
       when: hostvars['localhost']['server_id'] is defined
 
     # Make sure ServerPilto totally finishhes before doing the post-flight config...
-    # TODO - replace this with polling of the actionid per ServerPilot api
-    - pause:
-        minutes: 3
+    - name: Make sure ServerPilot finishes install before proceeding
+      uri:
+        url: "hostvars['localhost']['sp_api_base']/actions/{{hostvars['localhost']['action_id']}}"
+        method: GET
+        user: "{{ sp_client_id }}"
+        password: "{{ sp_api_key }}"
+        body_format: json
+        status_code: 200
+        timeout: 10
+        force_basic_auth: true
+      register: result
+      delay: 10
+      retries: 30
+      until: result.json.data.status == success
+      when: hostvars['localhost']['action_id'] is defined
 
     - name: Configure timezone 
       timezone:
         name: America/Chicago
+      register: timezone
 
-    - name: "Give it the good ol' reboot"
+    - name: "Restart server after timezone config"
       reboot:
+      when: timezone.changed
 
     - name: Add htop
       apt:
@@ -110,29 +130,25 @@
         name: libmagickwand-dev
 
     - name: Install Imagick on all PHP versions
-      pear:
-        name: pecl/imagick
-        executable: pecl{{ item }}-sp
-        state: present
+      command: pecl{{ item }}-sp install imagick
       with_items: "{{ phps }}"
-
-    - name: Install Imagick on all PHP versions
-      pear:
-        name: pecl/imagick
-        executable: "pecl{{ item }}-sp"
-        state: present
-      with_items: "{{ phps }}"
+      ignore_errors: true
 
     - name: Create a configuration file for imagick
-      command: 'bash -c "echo extension=imagick.so > /etc/php{{ item }}-sp/conf.d/imagick.ini"'
+      command: bash -c "echo extension=imagick.so > /etc/php{{ item }}-sp/conf.d/imagick.ini"
       with_items: "{{ phps }}"
 
     - name: Install libmcrypt-dev
       apt:
         name: libmcrypt-dev
 
+    - name: Install mcrypt
+      command: pecl{{ item }}-sp install --nodeps mcrypt-snapshot
+      with_items: "{{ phps_mcrypt }}"
+      ignore_errors: true
+
     - name: Create a configuration file for libmcrypt-dev
-      command: 'bash -c "echo extension=mcrypt.so > /etc/php7.2-sp/conf.d/mcrypt.ini"'
+      command: bash -c "echo extension=mcrypt.so > /etc/php{{ item }}-sp/conf.d/mcrypt.ini"
       with_items: "{{ phps_mcrypt }}"
 
     - name: Restart PHP
