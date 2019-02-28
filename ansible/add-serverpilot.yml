@@ -1,7 +1,6 @@
 # example: ansible-playbook add-serverpilot.yml --extra-vars "fresh_server_ip=1.2.3.4, server_name=somename"
 # https://github.com/ServerPilot/API#connect-a-new-server
 ---
-
 - name: Add ServerPilot server and return info 
   hosts: 127.0.0.1
   vars: 
@@ -60,30 +59,24 @@
         - wget
         - ca-certificates
 
-    - name: Fetch the ServerPilot installer 
-      command: wget -nv -O serverpilot-installer https://download.serverpilot.io/serverpilot-installer
+    - name: Fetch and run the ServerPilot installer, making sure it finishes before proceeding
+      block:
+        - command: wget -nv -O serverpilot-installer https://download.serverpilot.io/serverpilot-installer
+        - command: sh serverpilot-installer --server-id={{hostvars['localhost']['server_id']|quote}} --server-apikey={{hostvars['localhost']['apikey']|quote}}
+        - uri:
+            url: "hostvars['localhost']['sp_api_base']/actions/{{hostvars['localhost']['action_id']}}"
+            method: GET
+            user: "{{ sp_client_id }}"
+            password: "{{ sp_api_key }}"
+            body_format: json
+            status_code: 200
+            timeout: 10
+            force_basic_auth: true
+          register: result
+          delay: 20
+          retries: 11 # The installer takes around 3 minutes to complete
+          until: result.json.data.status == "success" # TODO: get this stupid conditional to work right
       when: hostvars['localhost']['server_id'] is defined
-
-    - name: Run installer 
-      command: sh serverpilot-installer --server-id={{hostvars['localhost']['server_id']|quote}} --server-apikey={{hostvars['localhost']['apikey']|quote}}
-      when: hostvars['localhost']['server_id'] is defined
-
-    # Make sure ServerPilto totally finishhes before doing the post-flight config...
-    - name: Make sure ServerPilot finishes install before proceeding
-      uri:
-        url: "hostvars['localhost']['sp_api_base']/actions/{{hostvars['localhost']['action_id']}}"
-        method: GET
-        user: "{{ sp_client_id }}"
-        password: "{{ sp_api_key }}"
-        body_format: json
-        status_code: 200
-        timeout: 10
-        force_basic_auth: true
-      register: result
-      delay: 10
-      retries: 30
-      until: result.json.data.status == success
-      when: hostvars['localhost']['action_id'] is defined
 
     - name: Configure timezone 
       timezone:
@@ -125,14 +118,14 @@
         - libc-dev 
         - pkg-config
 
-    - name: Add htop
+    - name: Add libmagickwand-dev
       apt:
         name: libmagickwand-dev
 
     - name: Install Imagick on all PHP versions
       command: pecl{{ item }}-sp install imagick
       with_items: "{{ phps }}"
-      ignore_errors: true
+      ignore_errors: true #TODO: make this actually idempotent
 
     - name: Create a configuration file for imagick
       command: bash -c "echo extension=imagick.so > /etc/php{{ item }}-sp/conf.d/imagick.ini"
@@ -145,7 +138,7 @@
     - name: Install mcrypt
       command: pecl{{ item }}-sp install --nodeps mcrypt-snapshot
       with_items: "{{ phps_mcrypt }}"
-      ignore_errors: true
+      ignore_errors: true #TODO: make this actually idempotent
 
     - name: Create a configuration file for libmcrypt-dev
       command: bash -c "echo extension=mcrypt.so > /etc/php{{ item }}-sp/conf.d/mcrypt.ini"
